@@ -8,6 +8,7 @@ interface Props {
 
 export default function ScreenshotGallery({ sessionId, artifacts }: Props) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [legacyModeIds, setLegacyModeIds] = useState<Set<string>>(new Set());
   const screenshots = artifacts.filter((a) => a.type === "screenshot");
 
   if (screenshots.length === 0) {
@@ -22,7 +23,9 @@ export default function ScreenshotGallery({ sessionId, artifacts }: Props) {
     <>
       <div className="shots">
         {screenshots.map((ss) => {
-          const src = `/api/sessions/${sessionId}/artifacts/${ss.id}/content`;
+          const scopedSrc = `/api/sessions/${sessionId}/artifacts/${ss.id}/content`;
+          const legacySrc = `/api/artifacts/${ss.id}/content`;
+          const src = legacyModeIds.has(ss.id) ? legacySrc : scopedSrc;
           const route = (ss.metadata?.route as string) ?? ss.name;
           return (
             <button
@@ -38,6 +41,13 @@ export default function ScreenshotGallery({ sessionId, artifacts }: Props) {
                 width={560}
                 height={315}
                 loading="lazy"
+                onError={() => {
+                  if (!legacyModeIds.has(ss.id)) {
+                    setLegacyModeIds((previous) =>
+                      new Set(previous).add(ss.id),
+                    );
+                  }
+                }}
               />
               <div className="shot-label">{route}</div>
             </button>

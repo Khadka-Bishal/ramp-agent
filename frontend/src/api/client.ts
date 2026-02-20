@@ -118,8 +118,14 @@ export const api = {
       method: "DELETE",
     }),
 
-  getArtifactContent: (sessionId: string, artifactId: string) =>
-    fetch(`${API_BASE}/sessions/${sessionId}/artifacts/${artifactId}/content`),
+  getArtifactContent: async (sessionId: string, artifactId: string) => {
+    const scopedPath = `${API_BASE}/sessions/${sessionId}/artifacts/${artifactId}/content`;
+    const scopedRes = await fetch(scopedPath);
+    if (scopedRes.status !== 404) {
+      return scopedRes;
+    }
+    return fetch(`${API_BASE}/artifacts/${artifactId}/content`);
+  },
 };
 
 export function subscribeToEvents(
