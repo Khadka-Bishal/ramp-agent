@@ -1,0 +1,55 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.db
+ramp_agent.db
+*.sqlite
+*.sqlite3
+artifacts/
+node_modules/
+dist/
+build/
+.idea/
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Env vars
+.env
+.env.*
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# App artifacts
+artifacts/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
