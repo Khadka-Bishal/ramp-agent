@@ -50,6 +50,7 @@ class BaseAgent:
         self._messages: list[dict] = []
         self._done = False
         self._result: dict = {}
+        self._interrupted = False
 
     def on_event(self, callback: Callable[[AgentEvent], Any]) -> None:
         self._event_callback = callback
@@ -87,7 +88,9 @@ class BaseAgent:
         """Continue the conversation with a follow-up message."""
         if self._messages and self._messages[-1]["role"] == "user":
             if isinstance(self._messages[-1]["content"], list):
-                self._messages[-1]["content"].append({"type": "text", "text": user_message})
+                self._messages[-1]["content"].append(
+                    {"type": "text", "text": user_message}
+                )
             else:
                 self._messages[-1]["content"] += f"\n\n{user_message}"
         else:
@@ -103,6 +106,11 @@ class BaseAgent:
         iterations = 0
 
         while iterations < self.max_iterations and not self._done:
+            if self._interrupted:
+                self._done = True
+                self._result = {"status": "interrupted", "summary": "Run interrupted"}
+                break
+
             iterations += 1
 
             kwargs: dict[str, Any] = {
@@ -116,9 +124,12 @@ class BaseAgent:
 
             response = await self._client.messages.create(**kwargs)
 
-            has_tool_use = any(
-                block.type == "tool_use" for block in response.content
-            )
+            if self._interrupted:
+                self._done = True
+                self._result = {"status": "interrupted", "summary": "Run interrupted"}
+                break
+
+            has_tool_use = any(block.type == "tool_use" for block in response.content)
 
             text_parts = []
             tool_results = []
@@ -130,11 +141,14 @@ class BaseAgent:
 
                 elif block.type == "tool_use":
                     tool_def = self._find_tool(block.name)
-                    self._emit("tool_call", {
-                        "tool": block.name,
-                        "input": block.input,
-                        "id": block.id,
-                    })
+                    self._emit(
+                        "tool_call",
+                        {
+                            "tool": block.name,
+                            "input": block.input,
+                            "id": block.id,
+                        },
+                    )
 
                     if tool_def is None:
                         result_str = f"Error: unknown tool '{block.name}'"
@@ -146,27 +160,38 @@ class BaseAgent:
                                 tool_content = result
                                 result_str = "[Media Content Array]"
                             else:
-                                tool_content = json.dumps(result) if not isinstance(result, str) else result
+                                tool_content = (
+                                    json.dumps(result)
+                                    if not isinstance(result, str)
+                                    else result
+                                )
                                 result_str = tool_content
                         except Exception as exc:
                             result_str = f"Error: {exc}"
                             tool_content = result_str
                             logger.exception("Tool %s failed", block.name)
 
-                    self._emit("tool_result", {
-                        "tool": block.name,
-                        "id": block.id,
-                        "result": result_str[:5000],
-                    })
+                    self._emit(
+                        "tool_result",
+                        {
+                            "tool": block.name,
+                            "id": block.id,
+                            "result": result_str[:5000],
+                        },
+                    )
 
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": tool_content,
-                    })
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": tool_content,
+                        }
+                    )
 
             if has_tool_use:
-                self._messages.append({"role": "assistant", "content": response.content})
+                self._messages.append(
+                    {"role": "assistant", "content": response.content}
+                )
                 self._messages.append({"role": "user", "content": tool_results})
                 continue
 
@@ -181,7 +206,9 @@ class BaseAgent:
             self._emit("status_change", {"status": f"{self.role}_completed"})
             return AgentOutput(role=self.role, result=self._result, events=self._events)
 
-        self._emit("error", {"message": f"Max iterations ({self.max_iterations}) reached"})
+        self._emit(
+            "error", {"message": f"Max iterations ({self.max_iterations}) reached"}
+        )
         return AgentOutput(
             role=self.role,
             result={"error": "max_iterations_reached"},
@@ -193,6 +220,14 @@ class BaseAgent:
         self._done = True
         self._result = result
         return "Session complete."
+
+    async def interrupt(self) -> None:
+        self._interrupted = True
+        self._done = True
+        try:
+            await self._client.close()
+        except Exception:
+            logger.exception("Failed to close model client during interrupt")
 
     def _parse_output(self, text: str) -> dict:
         if "```json" in text:

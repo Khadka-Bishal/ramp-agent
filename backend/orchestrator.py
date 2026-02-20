@@ -54,6 +54,11 @@ class Orchestrator:
         self._emit_event(
             "orchestrator", "status_change", {"status": "interrupt_requested"}
         )
+        if self._agent:
+            try:
+                await self._agent.interrupt()
+            except Exception:
+                logger.exception("Failed to interrupt agent loop")
         if self.sandbox:
             try:
                 await self.sandbox_provider.destroy(self.sandbox)
@@ -148,6 +153,9 @@ class Orchestrator:
         result = {"status": "failed", "error": None}
 
         try:
+            if self._interrupted:
+                return {"status": "interrupted", "error": "Run interrupted by user"}
+
             await self._update_run_status(RunStatus.running)
             await self._update_session_status(SessionStatus.running)
             self._emit_event("orchestrator", "status_change", {"status": "starting"})
@@ -191,6 +199,11 @@ class Orchestrator:
 
             # Run the agent loop — the LLM decides what to do
             output = await self._agent.run({"prompt": prompt, "repo_url": repo_url})
+
+            if self._interrupted:
+                await self._update_run_status(RunStatus.completed)
+                await self._update_session_status(SessionStatus.completed)
+                return {"status": "interrupted", "error": "Run interrupted by user"}
 
             # Persist all events
             await self._persist_events_batch(output.events)
@@ -267,6 +280,9 @@ class Orchestrator:
 
     async def continue_run(self, user_message: str) -> dict:
         """Send a follow-up message into the existing agent conversation."""
+        if self._interrupted:
+            return {"status": "interrupted", "error": "Run interrupted by user"}
+
         if not self._agent:
             return {"error": "No active agent session"}
 
@@ -279,6 +295,12 @@ class Orchestrator:
             await self._persist_event("user", "user_message", {"content": user_message})
 
             output = await self._agent.resume(user_message)
+
+            if self._interrupted:
+                await self._update_run_status(RunStatus.completed)
+                await self._update_session_status(SessionStatus.completed)
+                return {"status": "interrupted", "error": "Run interrupted by user"}
+
             await self._persist_events_batch(output.events)
 
             # Check for new diff/PR
@@ -328,6 +350,9 @@ class Orchestrator:
             await self._update_run_status(RunStatus.failed)
             await self._update_session_status(SessionStatus.failed)
             return {"error": str(exc)}
+        finally:
+            _active_run_tasks.pop(self.session_id, None)
+            _running_orchestrators.pop(self.session_id, None)
 
     async def _persist_events_batch(self, events: list[AgentEvent]) -> None:
         async with get_db() as db:
@@ -355,12 +380,18 @@ def register_running_orchestrator(session_id: str, orchestrator: Orchestrator) -
 
 
 async def interrupt_active_run(session_id: str) -> bool:
-    orchestrator = _running_orchestrators.get(session_id)
+    interrupted = False
+
+    orchestrator = _running_orchestrators.get(session_id) or _active_sessions.get(
+        session_id
+    )
     if orchestrator:
         await orchestrator.request_interrupt()
+        interrupted = True
 
     task = _active_run_tasks.get(session_id)
-    if not task or task.done():
-        return False
-    task.cancel()
-    return True
+    if task and not task.done():
+        task.cancel()
+        interrupted = True
+
+    return interrupted

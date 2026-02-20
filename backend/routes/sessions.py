@@ -135,6 +135,7 @@ async def send_message(
         async with get_db() as db:
             await save_agent_message(db, session_id, summary)
 
+    register_running_orchestrator(session_id, orchestrator)
     task = asyncio.create_task(_execute())
     register_active_run_task(session_id, task)
     return {"status": "message_sent"}
