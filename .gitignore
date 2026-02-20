@@ -22,6 +22,12 @@ build/
 .idea/
 .vscode/
 .DS_Store
+.agents/
+.ramp_verification/
+test_followup.py
+test_modal.py
+verify_fix.py
+*.md
 
 # Python
 __pycache__/
